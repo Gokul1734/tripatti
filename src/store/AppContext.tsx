@@ -1,11 +1,12 @@
 import React, { createContext, useContext, useReducer, useEffect, ReactNode } from 'react';
-import { Trip, Expense, TripMember, MEMBER_COLORS } from '@/types/trip';
+import { Trip, Expense, TripMember, PaymentConfirmation, MEMBER_COLORS } from '@/types/trip';
 import { cacheTrip, getCachedTrip } from '@/lib/offline-sync';
 
 interface AppState {
   trips: Trip[];
   currentTripId: string | null;
-  activeTab: 'trips' | 'detail' | 'add' | 'settle';
+  activeTab: 'trips' | 'detail' | 'add' | 'settle' | 'member';
+  selectedMemberId: string | null;
 }
 
 type Action =
@@ -16,14 +17,21 @@ type Action =
   | { type: 'SET_TAB'; tab: AppState['activeTab'] }
   | { type: 'ADD_MEMBER'; tripId: string; member: TripMember }
   | { type: 'ADD_EXPENSE'; tripId: string; expense: Expense }
-  | { type: 'DELETE_EXPENSE'; tripId: string; expenseId: string };
+  | { type: 'DELETE_EXPENSE'; tripId: string; expenseId: string }
+  | { type: 'ADD_PAYMENT'; tripId: string; payment: PaymentConfirmation }
+  | { type: 'CONFIRM_PAYMENT'; tripId: string; paymentId: string; role: 'payer' | 'receiver' }
+  | { type: 'SELECT_MEMBER'; memberId: string | null };
+
+function migrateTrip(t: any): Trip {
+  return { ...t, payments: t.payments || [] };
+}
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case 'SET_TRIPS':
-      return { ...state, trips: action.trips };
+      return { ...state, trips: action.trips.map(migrateTrip) };
     case 'ADD_TRIP':
-      return { ...state, trips: [...state.trips, action.trip] };
+      return { ...state, trips: [...state.trips, migrateTrip(action.trip)] };
     case 'DELETE_TRIP':
       return {
         ...state,
@@ -54,6 +62,32 @@ function reducer(state: AppState, action: Action): AppState {
       );
       return { ...state, trips };
     }
+    case 'ADD_PAYMENT': {
+      const trips = state.trips.map(t =>
+        t.id === action.tripId ? { ...t, payments: [...t.payments, action.payment] } : t
+      );
+      return { ...state, trips };
+    }
+    case 'CONFIRM_PAYMENT': {
+      const trips = state.trips.map(t => {
+        if (t.id !== action.tripId) return t;
+        return {
+          ...t,
+          payments: t.payments.map(p =>
+            p.id === action.paymentId
+              ? {
+                  ...p,
+                  confirmedByPayer: action.role === 'payer' ? true : p.confirmedByPayer,
+                  confirmedByReceiver: action.role === 'receiver' ? true : p.confirmedByReceiver,
+                }
+              : p
+          ),
+        };
+      });
+      return { ...state, trips };
+    }
+    case 'SELECT_MEMBER':
+      return { ...state, selectedMemberId: action.memberId };
     default:
       return state;
   }
@@ -63,6 +97,7 @@ const initialState: AppState = {
   trips: [],
   currentTripId: null,
   activeTab: 'trips',
+  selectedMemberId: null,
 };
 
 const AppContext = createContext<{
@@ -81,7 +116,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const saved = localStorage.getItem('tripwise_state');
       if (saved) {
         const parsed = JSON.parse(saved);
-        return { ...initialState, trips: parsed.trips || [] };
+        return { ...initialState, trips: (parsed.trips || []).map(migrateTrip) };
       }
     } catch {}
     return initialState;
@@ -89,7 +124,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     localStorage.setItem('tripwise_state', JSON.stringify({ trips: state.trips }));
-    // Cache each trip individually
     state.trips.forEach(t => cacheTrip(t.id, t));
   }, [state.trips]);
 
@@ -118,6 +152,7 @@ export function createTrip(name: string, emoji: string, currency: string, creato
       color: MEMBER_COLORS[0],
     }],
     expenses: [],
+    payments: [],
     createdAt: Date.now(),
   };
 }

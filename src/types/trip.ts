@@ -20,6 +20,16 @@ export interface Expense {
   createdAt: number;
 }
 
+export interface PaymentConfirmation {
+  id: string;
+  from: string; // member id (payer)
+  to: string; // member id (receiver)
+  amount: number;
+  confirmedByPayer: boolean;
+  confirmedByReceiver: boolean;
+  createdAt: number;
+}
+
 export interface Trip {
   id: string;
   name: string;
@@ -27,6 +37,7 @@ export interface Trip {
   emoji: string;
   members: TripMember[];
   expenses: Expense[];
+  payments: PaymentConfirmation[];
   createdAt: number;
   currency: string;
 }

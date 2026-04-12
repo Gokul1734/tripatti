@@ -89,75 +89,79 @@ export default function TripsPage() {
         })}
       </div>
 
-      {/* Create Modal */}
+      {/* Create Modal - Scrollable */}
       {showCreate && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-foreground/30" onClick={() => setShowCreate(false)}>
           <div
-            className="w-full max-w-[430px] rounded-t-3xl bg-card px-6 pb-8 pt-4 shadow-card-hover animate-slide-up"
+            className="w-full max-w-[430px] max-h-[85vh] flex flex-col rounded-t-3xl bg-card shadow-card-hover animate-slide-up"
             onClick={e => e.stopPropagation()}
           >
-            <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-border" />
-            <h2 className="font-display text-xl font-bold text-foreground mb-5">Create Trip</h2>
+            <div className="px-6 pt-4 pb-2 flex-shrink-0">
+              <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-border" />
+              <h2 className="font-display text-xl font-bold text-foreground">Create Trip</h2>
+            </div>
 
-            <div className="space-y-4">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">Trip Name</label>
-                <input
-                  value={name}
-                  onChange={e => setName(e.target.value)}
-                  placeholder="Beach Weekend 🌊"
-                  className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">Your Name</label>
-                <input
-                  value={creatorName}
-                  onChange={e => setCreatorName(e.target.value)}
-                  placeholder="Enter your name"
-                  className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
-                />
-              </div>
-
-              <div>
-                <label className="mb-2 block text-xs font-medium text-muted-foreground">Icon</label>
-                <div className="flex flex-wrap gap-2">
-                  {TRIP_EMOJIS.map(e => (
-                    <button
-                      key={e}
-                      onClick={() => { sounds.tap(); setEmoji(e); }}
-                      className={`press-effect flex h-10 w-10 items-center justify-center rounded-xl text-lg transition-all
-                        ${emoji === e ? 'bg-primary/10 ring-2 ring-primary scale-110' : 'bg-secondary'}`}
-                    >
-                      {e}
-                    </button>
-                  ))}
+            <div className="flex-1 overflow-y-auto px-6 pb-8">
+              <div className="space-y-4 pt-3">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-muted-foreground">Trip Name</label>
+                  <input
+                    value={name}
+                    onChange={e => setName(e.target.value)}
+                    placeholder="Beach Weekend 🌊"
+                    className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                  />
                 </div>
-              </div>
 
-              <div>
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">Currency</label>
-                <select
-                  value={currency}
-                  onChange={e => setCurrency(e.target.value)}
-                  className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm text-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-muted-foreground">Your Name</label>
+                  <input
+                    value={creatorName}
+                    onChange={e => setCreatorName(e.target.value)}
+                    placeholder="Enter your name"
+                    className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-xs font-medium text-muted-foreground">Icon</label>
+                  <div className="flex flex-wrap gap-2">
+                    {TRIP_EMOJIS.map(e => (
+                      <button
+                        key={e}
+                        onClick={() => { sounds.tap(); setEmoji(e); }}
+                        className={`press-effect flex h-10 w-10 items-center justify-center rounded-xl text-lg transition-all
+                          ${emoji === e ? 'bg-primary/10 ring-2 ring-primary scale-110' : 'bg-secondary'}`}
+                      >
+                        {e}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-muted-foreground">Currency</label>
+                  <select
+                    value={currency}
+                    onChange={e => setCurrency(e.target.value)}
+                    className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm text-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  >
+                    <option value="USD">USD ($)</option>
+                    <option value="EUR">EUR (€)</option>
+                    <option value="GBP">GBP (£)</option>
+                    <option value="INR">INR (₹)</option>
+                    <option value="JPY">JPY (¥)</option>
+                  </select>
+                </div>
+
+                <button
+                  onClick={handleCreate}
+                  disabled={!name.trim() || !creatorName.trim()}
+                  className="press-effect w-full rounded-xl bg-primary py-3.5 font-semibold text-primary-foreground transition-all disabled:opacity-40"
                 >
-                  <option value="USD">USD ($)</option>
-                  <option value="EUR">EUR (€)</option>
-                  <option value="GBP">GBP (£)</option>
-                  <option value="INR">INR (₹)</option>
-                  <option value="JPY">JPY (¥)</option>
-                </select>
+                  Create Trip ✨
+                </button>
               </div>
-
-              <button
-                onClick={handleCreate}
-                disabled={!name.trim() || !creatorName.trim()}
-                className="press-effect w-full rounded-xl bg-primary py-3.5 font-semibold text-primary-foreground transition-all disabled:opacity-40"
-              >
-                Create Trip ✨
-              </button>
             </div>
           </div>
         </div>
