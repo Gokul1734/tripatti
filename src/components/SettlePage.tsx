@@ -15,6 +15,7 @@ interface SettlePageProps {
 export default function SettlePage({ trip, onBack, onRefetch }: SettlePageProps) {
   const { user } = useAuth();
   const [payingSettlement, setPayingSettlement] = useState<number | null>(null);
+  const currentMemberId = trip.members.find(m => m.user_id === user?.id)?.id || null;
 
   const balances: Record<string, number> = {};
   trip.members.forEach(m => { balances[m.id] = 0; });
@@ -159,7 +160,7 @@ export default function SettlePage({ trip, onBack, onRefetch }: SettlePageProps)
 
                   {!isFullyPaid && (
                     <div className="border-t border-border px-4 py-3">
-                      {payment ? (
+                          {payment ? (
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             {payment.confirmed_by_payer && (
@@ -173,12 +174,13 @@ export default function SettlePage({ trip, onBack, onRefetch }: SettlePageProps)
                               </span>
                             )}
                           </div>
-                          {payment.confirmed_by_payer && !payment.confirmed_by_receiver && (
+                          {/* Restrict CTAs: only the receiver (to) can confirm received, only the payer (from) can confirm paid if that odd state occurs */}
+                          {payment.confirmed_by_payer && !payment.confirmed_by_receiver && currentMemberId === s.to && (
                             <button onClick={() => handleConfirmReceived(s)} className="press-effect flex items-center gap-1 rounded-xl bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-primary-foreground">
                               <Check size={12} /> Confirm Received
                             </button>
                           )}
-                          {!payment.confirmed_by_payer && payment.confirmed_by_receiver && (
+                          {!payment.confirmed_by_payer && payment.confirmed_by_receiver && currentMemberId === s.from && (
                             <button onClick={() => handleMarkPaid(s)} className="press-effect flex items-center gap-1 rounded-xl bg-primary px-3 py-1.5 text-[11px] font-semibold text-primary-foreground">
                               <Check size={12} /> Confirm Paid
                             </button>
@@ -193,10 +195,15 @@ export default function SettlePage({ trip, onBack, onRefetch }: SettlePageProps)
                             <Check size={12} /> I've Received This
                           </button>
                         </div>
-                      ) : (
-                        <button onClick={() => { sounds.tap(); setPayingSettlement(i); }} className="press-effect w-full flex items-center justify-center gap-1.5 rounded-xl bg-secondary py-2 text-xs font-semibold text-secondary-foreground">
-                          <Check size={14} /> Mark as Paid
-                        </button>
+                          ) : (
+                        // Show Mark as Paid only to the owing member (from)
+                        currentMemberId === s.from ? (
+                          <button onClick={() => { sounds.tap(); setPayingSettlement(i); }} className="press-effect w-full flex items-center justify-center gap-1.5 rounded-xl bg-secondary py-2 text-xs font-semibold text-secondary-foreground">
+                            <Check size={14} /> Mark as Paid
+                          </button>
+                        ) : (
+                          <div className="text-xs text-muted-foreground text-center">Waiting for payer</div>
+                        )
                       )}
                     </div>
                   )}
