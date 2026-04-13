@@ -5,7 +5,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { MEMBER_COLORS } from '@/types/trip';
 import { sounds } from '@/lib/sounds';
 import { toast } from 'sonner';
-import { Users, ArrowLeft, Wallet, TrendingUp, TrendingDown, ArrowRight, Send, HandCoins, Copy, Check, Share2, Trash, Clock } from 'lucide-react';
+import { Users, ArrowLeft, Wallet, TrendingUp, TrendingDown, ArrowRight, Send, HandCoins, Copy, Check, Share2, Trash, Clock, Bell } from 'lucide-react';
 
 interface TripDetailPageProps {
   trip: FullTrip;
@@ -21,39 +21,6 @@ export default function TripDetailPage({ trip, onBack, onAddExpense, onSettle, o
   const [showAddMember, setShowAddMember] = useState(false);
   const [selectedMember, setSelectedMember] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-
-  // remove global summary to keep UI minimal
-
-  // Calculate balances from DB data
-  const balances: Record<string, number> = {};
-  trip.members.forEach(m => { balances[m.id] = 0; });
-
-  trip.expenses.forEach(exp => {
-    const splitMemberIds = exp.splits.map(s => s.member_id);
-    if (splitMemberIds.length > 0) {
-      const share = Number(exp.amount) / splitMemberIds.length;
-      splitMemberIds.forEach(id => { balances[id] = (balances[id] || 0) - share; });
-      balances[exp.paid_by_member_id] = (balances[exp.paid_by_member_id] || 0) + Number(exp.amount);
-    }
-  });
-
-  // We'll compute per-member totals (toPay / toReceive) from expense splits
-  const toPay: Record<string, number> = {};
-  const toReceive: Record<string, number> = {};
-  trip.members.forEach(m => { toPay[m.id] = 0; toReceive[m.id] = 0; });
-
-  trip.expenses.forEach(exp => {
-    const splitMemberIds = exp.splits.map((s: any) => s.member_id);
-    if (splitMemberIds.length > 0) {
-      const share = Number(exp.amount) / splitMemberIds.length;
-      splitMemberIds.forEach((id: string) => {
-        if (id !== exp.paid_by_member_id) {
-          toPay[id] = (toPay[id] || 0) + share;
-          toReceive[exp.paid_by_member_id] = (toReceive[exp.paid_by_member_id] || 0) + share;
-        }
-      });
-    }
-  });
 
   const getMemberName = (id: string) => trip.members.find(m => m.id === id)?.name || 'Unknown';
   const getMemberColor = (id: string) => trip.members.find(m => m.id === id)?.color || '#999';
@@ -140,6 +107,26 @@ export default function TripDetailPage({ trip, onBack, onAddExpense, onSettle, o
       </div>
 
       <div className="flex-1 overflow-y-auto px-5 pb-24">
+        {/* Summary Stats */}
+        {trip.expenses.length > 0 && (
+          <div className="mb-5 rounded-2xl bg-gradient-to-br from-primary/10 to-accent/10 p-4 animate-fade-in">
+            <div className="grid grid-cols-3 gap-3">
+              <div className="flex flex-col items-center rounded-lg bg-card p-3">
+                <p className="text-[11px] text-muted-foreground">Total Paid</p>
+                <p className="text-lg font-bold text-primary">{formatCurrency(trip.expenses.reduce((s, e) => s + Number(e.amount), 0))}</p>
+              </div>
+              <div className="flex flex-col items-center rounded-lg bg-card p-3">
+                <p className="text-[11px] text-muted-foreground">Members</p>
+                <p className="text-lg font-bold text-primary">{trip.members.length}</p>
+              </div>
+              <div className="flex flex-col items-center rounded-lg bg-card p-3">
+                <p className="text-[11px] text-muted-foreground">Unsettled</p>
+                <p className="text-lg font-bold text-orange-600">{trip.payments.filter((p: any) => !(p.confirmed_by_payer && p.confirmed_by_receiver)).length}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Minimal members & settlements view: show first name and simple to-pay / to-receive totals */}
 
         {/* Members */}
@@ -281,7 +268,7 @@ export default function TripDetailPage({ trip, onBack, onAddExpense, onSettle, o
                                   ) : completed ? (
                                     <div className="flex items-center gap-1 text-[12px] text-emerald-600"><Check size={12} /> Settled</div>
                                   ) : payment ? (
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex items-center gap-2 flex-wrap">
                                       {payment.confirmed_by_payer && !payment.confirmed_by_receiver && currentMemberId === exp.paid_by_member_id && (
                                         <button onClick={async () => {
                                           try {
@@ -297,32 +284,80 @@ export default function TripDetailPage({ trip, onBack, onAddExpense, onSettle, o
                                           try { sounds.success(); await supabase.from('payments').update({ confirmed_by_payer: true }).eq('id', payment.id); toast.success('Confirmed paid'); await onRefetch(); } catch (err) { toast.error('Failed'); }
                                         }} className="press-effect rounded-xl bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground">Confirm Paid</button>
                                       )}
+                                      {/* Remind button for expense creator when payment is pending */}
+                                      {user && exp.created_by === user.id && !payment.confirmed_by_payer && (
+                                        <button onClick={async () => {
+                                          try {
+                                            sounds.tap();
+                                            const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
+                                            await fetch(`https://${projectId}.supabase.co/functions/v1/push-notifications`, {
+                                              method: 'POST',
+                                              headers: { 'Content-Type': 'application/json' },
+                                              body: JSON.stringify({
+                                                action: 'send-notification-to-user',
+                                                toUserId: s.member_id,
+                                                title: `💰 Reminder from ${trip.name}`,
+                                                message: `${trip.members.find((m: any) => m.id === exp.paid_by_member_id)?.name || 'Someone'} is waiting for your payment of ${formatCurrency(share)}`,
+                                                tripId: trip.id,
+                                              }),
+                                            });
+                                            toast.success('Reminder sent!');
+                                          } catch (err) { toast.error('Reminder failed'); }
+                                        }} className="press-effect rounded-xl bg-orange-500 px-3 py-1 text-xs font-semibold text-primary-foreground flex items-center gap-1">
+                                          <Bell size={12} /> Remind
+                                        </button>
+                                      )}
                                       <div className="text-xs text-muted-foreground">Pending</div>
                                     </div>
                                   ) : (
                                     // show Mark as Paid only to the owing member
                                     currentMemberId === s.member_id ? (
-                                      <button onClick={async () => {
-                                        try {
-                                          sounds.success();
-                                          // create or mark payment
-                                          const existing = trip.payments.find((p: any) => p.from_member_id === s.member_id && p.to_member_id === exp.paid_by_member_id && !(p.confirmed_by_payer && p.confirmed_by_receiver));
-                                          if (existing) {
-                                            await supabase.from('payments').update({ confirmed_by_payer: true }).eq('id', existing.id);
-                                          } else {
-                                            await supabase.from('payments').insert({
-                                              trip_id: trip.id,
-                                              from_member_id: s.member_id,
-                                              to_member_id: exp.paid_by_member_id,
-                                              amount: share,
-                                              confirmed_by_payer: true,
-                                              confirmed_by_receiver: false,
-                                            });
-                                          }
-                                          toast.success('Marked as paid');
-                                          await onRefetch();
-                                        } catch (err) { toast.error('Failed'); }
-                                      }} className="press-effect rounded-xl bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground">Mark Paid</button>
+                                      <div className="flex items-center gap-2">
+                                        <button onClick={async () => {
+                                          try {
+                                            sounds.success();
+                                            // create or mark payment
+                                            const existing = trip.payments.find((p: any) => p.from_member_id === s.member_id && p.to_member_id === exp.paid_by_member_id && !(p.confirmed_by_payer && p.confirmed_by_receiver));
+                                            if (existing) {
+                                              await supabase.from('payments').update({ confirmed_by_payer: true }).eq('id', existing.id);
+                                            } else {
+                                              await supabase.from('payments').insert({
+                                                trip_id: trip.id,
+                                                from_member_id: s.member_id,
+                                                to_member_id: exp.paid_by_member_id,
+                                                amount: share,
+                                                confirmed_by_payer: true,
+                                                confirmed_by_receiver: false,
+                                              });
+                                            }
+                                            toast.success('Marked as paid');
+                                            await onRefetch();
+                                          } catch (err) { toast.error('Failed'); }
+                                        }} className="press-effect rounded-xl bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground">Mark Paid</button>
+                                        {/* Remind button for expense creator to remind payer if needed */}
+                                        {user && exp.created_by === user.id && (
+                                          <button onClick={async () => {
+                                            try {
+                                              sounds.tap();
+                                              const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
+                                              await fetch(`https://${projectId}.supabase.co/functions/v1/push-notifications`, {
+                                                method: 'POST',
+                                                headers: { 'Content-Type': 'application/json' },
+                                                body: JSON.stringify({
+                                                  action: 'send-notification-to-user',
+                                                  toUserId: s.member_id,
+                                                  title: `💰 Reminder from ${trip.name}`,
+                                                  message: `${trip.members.find((m: any) => m.id === exp.paid_by_member_id)?.name || 'Someone'} is waiting for your payment of ${formatCurrency(share)}`,
+                                                  tripId: trip.id,
+                                                }),
+                                              });
+                                              toast.success('Reminder sent!');
+                                            } catch (err) { toast.error('Reminder failed'); }
+                                          }} className="press-effect rounded-xl bg-orange-500 px-3 py-1 text-xs font-semibold text-primary-foreground flex items-center gap-1">
+                                            <Bell size={12} />
+                                          </button>
+                                        )}
+                                      </div>
                                     ) : (
                                       <div className="text-xs text-muted-foreground">Waiting</div>
                                     )
