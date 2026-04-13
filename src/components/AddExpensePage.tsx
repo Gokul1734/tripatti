@@ -11,15 +11,20 @@ interface AddExpensePageProps {
   trip: FullTrip;
   onBack: () => void;
   onRefetch: () => void;
+  expenseToEdit?: any | null;
 }
 
-export default function AddExpensePage({ trip, onBack, onRefetch }: AddExpensePageProps) {
+export default function AddExpensePage({ trip, onBack, onRefetch, expenseToEdit }: AddExpensePageProps) {
   const { user } = useAuth();
-  const [description, setDescription] = useState('');
-  const [amount, setAmount] = useState('');
-  const [category, setCategory] = useState('food');
-  const [paidBy, setPaidBy] = useState(trip.members.find(m => m.user_id === user?.id)?.id || trip.members[0]?.id || '');
-  const [splitAmong, setSplitAmong] = useState<string[]>(trip.members.map(m => m.id));
+  const [description, setDescription] = useState(expenseToEdit ? expenseToEdit.description : '');
+  const [amount, setAmount] = useState(expenseToEdit ? String(expenseToEdit.amount) : '');
+  const [category, setCategory] = useState(expenseToEdit ? expenseToEdit.category : 'food');
+  const [paidBy, setPaidBy] = useState(
+    expenseToEdit ? expenseToEdit.paid_by_member_id : (trip.members.find(m => m.user_id === user?.id)?.id || trip.members[0]?.id || '')
+  );
+  const [splitAmong, setSplitAmong] = useState<string[]>(
+    expenseToEdit ? (expenseToEdit.splits || []).map((s: any) => s.member_id) : trip.members.map(m => m.id)
+  );
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -35,19 +40,41 @@ export default function AddExpensePage({ trip, onBack, onRefetch }: AddExpensePa
     }
     setLoading(true);
 
-    const { data: expense, error } = await supabase
-      .from('expenses')
-      .insert({
-        trip_id: trip.id,
-        description: description.trim(),
-        amount: parseFloat(amount),
-        currency: trip.currency,
-        paid_by_member_id: paidBy,
-        category,
-        created_by: user.id,
-      })
-      .select()
-      .single();
+    let expense: any = null;
+    let error: any = null;
+
+    if (expenseToEdit) {
+      const res = await supabase
+        .from('expenses')
+        .update({
+          description: description.trim(),
+          amount: parseFloat(amount),
+          currency: trip.currency,
+          paid_by_member_id: paidBy,
+          category,
+        })
+        .eq('id', expenseToEdit.id)
+        .select()
+        .single();
+      expense = res.data;
+      error = res.error;
+    } else {
+      const res = await supabase
+        .from('expenses')
+        .insert({
+          trip_id: trip.id,
+          description: description.trim(),
+          amount: parseFloat(amount),
+          currency: trip.currency,
+          paid_by_member_id: paidBy,
+          category,
+          created_by: user.id,
+        })
+        .select()
+        .single();
+      expense = res.data;
+      error = res.error;
+    }
 
     if (error || !expense) {
       toast.error('Failed to add expense');
@@ -55,13 +82,18 @@ export default function AddExpensePage({ trip, onBack, onRefetch }: AddExpensePa
       return;
     }
 
-    // Add splits
-    await supabase.from('expense_splits').insert(
-      splitAmong.map(memberId => ({
-        expense_id: expense.id,
-        member_id: memberId,
-      }))
-    );
+    // Replace splits
+    if (expense) {
+      await supabase.from('expense_splits').delete().eq('expense_id', expense.id);
+      if (splitAmong.length > 0) {
+        await supabase.from('expense_splits').insert(
+          splitAmong.map(memberId => ({
+            expense_id: expense.id,
+            member_id: memberId,
+          }))
+        );
+      }
+    }
 
     // Send push notification
     try {

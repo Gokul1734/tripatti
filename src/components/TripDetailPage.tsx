@@ -13,9 +13,10 @@ interface TripDetailPageProps {
   onAddExpense: () => void;
   onSettle: () => void;
   onRefetch: () => void;
+  onEditExpense?: (expense: any) => void;
 }
 
-export default function TripDetailPage({ trip, onBack, onAddExpense, onSettle, onRefetch }: TripDetailPageProps) {
+export default function TripDetailPage({ trip, onBack, onAddExpense, onSettle, onEditExpense, onRefetch }: TripDetailPageProps) {
   const { user } = useAuth();
   const [showAddMember, setShowAddMember] = useState(false);
   const [selectedMember, setSelectedMember] = useState<string | null>(null);
@@ -257,6 +258,13 @@ export default function TripDetailPage({ trip, onBack, onAddExpense, onSettle, o
             <div className="flex flex-col gap-2">
               {[...(selectedMember ? memberExpenses : trip.expenses)].reverse().map((exp, i) => {
                 const cat = CATEGORIES[exp.category] || CATEGORIES.other;
+                // compute split share
+                const splitCount = exp.splits?.length || 0;
+                const perShare = splitCount > 0 ? Number(exp.amount) / splitCount : 0;
+                // helper to find payment for a from/to/amount
+                const findPayment = (fromId: string, toId: string, amount: number) => {
+                  return trip.payments.find(p => p.from_member_id === fromId && p.to_member_id === toId && Number(p.amount) === Number(amount));
+                };
                 return (
                   <div key={exp.id} className={`flex items-center gap-3 rounded-2xl bg-card p-3 shadow-card animate-fade-in stagger-${Math.min(i + 1, 5)}`}>
                     <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-secondary text-lg">{cat.emoji}</div>
@@ -265,9 +273,86 @@ export default function TripDetailPage({ trip, onBack, onAddExpense, onSettle, o
                       <p className="text-[11px] text-muted-foreground">
                         Paid by {getMemberName(exp.paid_by_member_id)} · {exp.splits.length} split
                       </p>
+                      {/* Splits details and per-user actions */}
+                      {exp.splits && exp.splits.length > 0 && (
+                        <div className="mt-2 text-[12px] text-muted-foreground">
+                          {exp.splits.map((s: any) => {
+                            const member = trip.members.find(m => m.id === s.member_id);
+                            if (!member) return null;
+                            const payment = findPayment(s.member_id, exp.paid_by_member_id, perShare);
+                            const isCurrentUserMember = (user && member.user_id === user.id);
+                            const isPayer = user && trip.members.find(m => m.user_id === user.id)?.id === exp.paid_by_member_id;
+                            return (
+                              <div key={s.id} className="flex items-center justify-between mt-1">
+                                <div className="flex items-center gap-2">
+                                  <div className="h-6 w-6 flex items-center justify-center rounded-full text-xs font-bold text-primary-foreground" style={{ backgroundColor: member.color }}>{member.name.charAt(0)}</div>
+                                  <div>
+                                    <div className="text-xs font-medium text-foreground">{member.name}</div>
+                                    <div className="text-[11px] text-muted-foreground">{trip.currency} {perShare.toFixed(2)}</div>
+                                  </div>
+                                </div>
+                                <div>
+                                  {payment ? (
+                                    payment.confirmed_by_payer && payment.confirmed_by_receiver ? (
+                                      <span className="text-[12px] text-emerald-600 font-semibold">Paid ✓</span>
+                                    ) : (
+                                      isPayer ? (
+                                        // payer can confirm received
+                                        <button onClick={async () => {
+                                          try {
+                                            await supabase.from('payments').update({ confirmed_by_receiver: true }).eq('id', payment.id);
+                                            // remove split row
+                                            await supabase.from('expense_splits').delete().eq('expense_id', exp.id).eq('member_id', s.member_id);
+                                            await onRefetch();
+                                            sounds.success();
+                                            toast.success('Payment confirmed and split cleared');
+                                          } catch {
+                                            toast.error('Failed to confirm');
+                                          }
+                                        }} className="press-effect rounded-xl bg-emerald-600 px-3 py-1 text-[12px] font-semibold text-primary-foreground">Confirm Received</button>
+                                      ) : (
+                                        <span className="text-[12px] text-amber-600">Awaiting confirmation</span>
+                                      )
+                                    )
+                                  ) : (
+                                    isCurrentUserMember ? (
+                                      // allow owing member to mark as paid
+                                      <button onClick={async () => {
+                                        try {
+                                          await supabase.from('payments').insert({
+                                            trip_id: trip.id,
+                                            from_member_id: s.member_id,
+                                            to_member_id: exp.paid_by_member_id,
+                                            amount: perShare,
+                                            confirmed_by_payer: true,
+                                            confirmed_by_receiver: false,
+                                          });
+                                          sounds.success();
+                                          toast.success('Marked as paid');
+                                          await onRefetch();
+                                        } catch {
+                                          toast.error('Failed to mark paid');
+                                        }
+                                      }} className="press-effect rounded-xl bg-primary px-3 py-1 text-[12px] font-semibold text-primary-foreground">Mark Paid</button>
+                                    ) : (
+                                      <span className="text-[12px] text-muted-foreground">—</span>
+                                    )
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                     <div className="text-right">
                       <p className="text-sm font-bold text-foreground">{formatCurrency(Number(exp.amount))}</p>
+                      <div className="mt-2 flex items-center justify-end gap-2">
+                        {/* Edit button for expense creator */}
+                        {user && exp.created_by === user.id && onEditExpense && (
+                          <button onClick={() => { sounds.tap(); onEditExpense!(exp); }} className="press-effect rounded-xl bg-secondary px-2 py-1 text-xs font-semibold text-foreground">Edit</button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );

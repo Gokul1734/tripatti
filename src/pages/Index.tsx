@@ -17,6 +17,7 @@ function AppContent() {
   const { user, loading: authLoading } = useAuth();
   const { trips, loading: tripsLoading, currentTrip, currentTripId, setCurrentTripId, refetch } = useTrips();
   const [activeTab, setActiveTab] = useState<Tab>('trips');
+  const [editingExpense, setEditingExpense] = useState<any | null>(null);
   const [online, setOnline] = useState(navigator.onLine);
   const [showStatus, setShowStatus] = useState(false);
   const [pushAsked, setPushAsked] = useState(false);
@@ -115,10 +116,16 @@ function AppContent() {
           onAddExpense={() => setActiveTab('add')}
           onSettle={() => setActiveTab('settle')}
           onRefetch={refetch}
+          onEditExpense={(expense: any) => { setEditingExpense(expense); setActiveTab('add'); }}
         />
       )}
       {activeTab === 'add' && currentTrip && (
-        <AddExpensePage trip={currentTrip} onBack={() => setActiveTab('detail')} onRefetch={refetch} />
+        <AddExpensePage
+          trip={currentTrip}
+          onBack={() => { setEditingExpense(null); setActiveTab('detail'); }}
+          onRefetch={refetch}
+          expenseToEdit={editingExpense}
+        />
       )}
       {activeTab === 'settle' && currentTrip && (
         <SettlePage trip={currentTrip} onBack={() => setActiveTab('detail')} onRefetch={refetch} />
