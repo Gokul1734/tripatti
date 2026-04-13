@@ -1,69 +1,111 @@
 import { useState } from 'react';
-import { useApp } from '@/store/AppContext';
-import { PaymentConfirmation } from '@/types/trip';
-import { calculateSettlements, formatCurrency, getMemberName, getMemberColor } from '@/lib/calculations';
+import { useAuth } from '@/hooks/useAuth';
+import { FullTrip } from '@/hooks/useTrips';
+import { supabase } from '@/integrations/supabase/client';
 import { sounds } from '@/lib/sounds';
+import { toast } from 'sonner';
 import { ArrowLeft, ArrowRight, CheckCircle2, Check, Clock, Send } from 'lucide-react';
 
-export default function SettlePage() {
-  const { currentTrip, dispatch } = useApp();
+interface SettlePageProps {
+  trip: FullTrip;
+  onBack: () => void;
+  onRefetch: () => void;
+}
+
+export default function SettlePage({ trip, onBack, onRefetch }: SettlePageProps) {
+  const { user } = useAuth();
   const [payingSettlement, setPayingSettlement] = useState<number | null>(null);
 
-  if (!currentTrip) return null;
+  const balances: Record<string, number> = {};
+  trip.members.forEach(m => { balances[m.id] = 0; });
 
-  const settlements = calculateSettlements(currentTrip);
+  trip.expenses.forEach(exp => {
+    const splitMemberIds = exp.splits.map(s => s.member_id);
+    if (splitMemberIds.length > 0) {
+      const share = Number(exp.amount) / splitMemberIds.length;
+      splitMemberIds.forEach(id => { balances[id] = (balances[id] || 0) - share; });
+      balances[exp.paid_by_member_id] = (balances[exp.paid_by_member_id] || 0) + Number(exp.amount);
+    }
+  });
+
+  const debtors = Object.entries(balances).filter(([, b]) => b < -0.01).map(([id, b]) => ({ id, amount: -b })).sort((a, b) => b.amount - a.amount);
+  const creditors = Object.entries(balances).filter(([, b]) => b > 0.01).map(([id, b]) => ({ id, amount: b })).sort((a, b) => b.amount - a.amount);
+  const settlements: { from: string; to: string; amount: number }[] = [];
+  let di = 0, ci = 0;
+  const ds = [...debtors], cs = [...creditors];
+  while (di < ds.length && ci < cs.length) {
+    const amt = Math.min(ds[di].amount, cs[ci].amount);
+    if (amt > 0.01) settlements.push({ from: ds[di].id, to: cs[ci].id, amount: Math.round(amt * 100) / 100 });
+    ds[di].amount -= amt; cs[ci].amount -= amt;
+    if (ds[di].amount < 0.01) di++;
+    if (cs[ci].amount < 0.01) ci++;
+  }
+
+  const getMemberName = (id: string) => trip.members.find(m => m.id === id)?.name || 'Unknown';
+  const getMemberColor = (id: string) => trip.members.find(m => m.id === id)?.color || '#999';
+  const formatCurrency = (amount: number) =>
+    new Intl.NumberFormat('en-US', { style: 'currency', currency: trip.currency, minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(amount);
 
   const getPaymentForSettlement = (from: string, to: string) => {
-    return currentTrip.payments.find(
-      p => p.from === from && p.to === to && !(p.confirmedByPayer && p.confirmedByReceiver)
-    );
+    return trip.payments.find(p => p.from_member_id === from && p.to_member_id === to && !(p.confirmed_by_payer && p.confirmed_by_receiver));
   };
 
   const getCompletedPayment = (from: string, to: string) => {
-    return currentTrip.payments.find(
-      p => p.from === from && p.to === to && p.confirmedByPayer && p.confirmedByReceiver
-    );
+    return trip.payments.find(p => p.from_member_id === from && p.to_member_id === to && p.confirmed_by_payer && p.confirmed_by_receiver);
   };
 
-  const handleMarkPaid = (s: { from: string; to: string; amount: number }) => {
+  const handleMarkPaid = async (s: { from: string; to: string; amount: number }) => {
     sounds.success();
     const existing = getPaymentForSettlement(s.from, s.to);
     if (existing) {
-      dispatch({ type: 'CONFIRM_PAYMENT', tripId: currentTrip.id, paymentId: existing.id, role: 'payer' });
+      await supabase.from('payments').update({ confirmed_by_payer: true }).eq('id', existing.id);
     } else {
-      const payment: PaymentConfirmation = {
-        id: crypto.randomUUID(),
-        from: s.from,
-        to: s.to,
+      await supabase.from('payments').insert({
+        trip_id: trip.id,
+        from_member_id: s.from,
+        to_member_id: s.to,
         amount: s.amount,
-        confirmedByPayer: true,
-        confirmedByReceiver: false,
-        createdAt: Date.now(),
-      };
-      dispatch({ type: 'ADD_PAYMENT', tripId: currentTrip.id, payment });
+        confirmed_by_payer: true,
+        confirmed_by_receiver: false,
+      });
     }
+
+    // Send notification
+    try {
+      const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
+      await fetch(`https://${projectId}.supabase.co/functions/v1/push-notifications`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'send-notification',
+          tripId: trip.id,
+          title: `✅ Payment in ${trip.name}`,
+          message: `${getMemberName(s.from)} marked ${formatCurrency(s.amount)} as paid to ${getMemberName(s.to)}`,
+          excludeUserId: user?.id,
+        }),
+      });
+    } catch {}
+
+    toast.success('Marked as paid!');
     setPayingSettlement(null);
+    await onRefetch();
   };
 
-  const handleConfirmReceived = (s: { from: string; to: string }) => {
+  const handleConfirmReceived = async (s: { from: string; to: string }) => {
     sounds.success();
     const existing = getPaymentForSettlement(s.from, s.to);
     if (existing) {
-      dispatch({ type: 'CONFIRM_PAYMENT', tripId: currentTrip.id, paymentId: existing.id, role: 'receiver' });
+      await supabase.from('payments').update({ confirmed_by_receiver: true }).eq('id', existing.id);
     }
+    toast.success('Payment confirmed!');
+    await onRefetch();
   };
 
   return (
     <div className="flex flex-1 flex-col safe-top">
       <div className="flex-shrink-0 px-5 pt-4 mb-5">
         <div className="flex items-center gap-3 animate-slide-down">
-          <button
-            onClick={() => {
-              sounds.navigate();
-              dispatch({ type: 'SET_TAB', tab: 'detail' });
-            }}
-            className="press-effect flex h-9 w-9 items-center justify-center rounded-xl bg-secondary"
-          >
+          <button onClick={() => { sounds.navigate(); onBack(); }} className="press-effect flex h-9 w-9 items-center justify-center rounded-xl bg-secondary">
             <ArrowLeft size={18} />
           </button>
           <h1 className="font-display text-xl font-bold text-foreground">Settlements</h1>
@@ -79,116 +121,80 @@ export default function SettlePage() {
           </div>
         ) : (
           <div className="flex flex-col gap-3 animate-fade-in">
-            <p className="text-xs text-muted-foreground mb-1">
-              Minimum transfers to settle all debts:
-            </p>
+            <p className="text-xs text-muted-foreground mb-1">Minimum transfers to settle all debts:</p>
             {settlements.map((s, i) => {
-              const fromName = getMemberName(currentTrip, s.from);
-              const toName = getMemberName(currentTrip, s.to);
-              const fromColor = getMemberColor(currentTrip, s.from);
-              const toColor = getMemberColor(currentTrip, s.to);
+              const fromName = getMemberName(s.from);
+              const toName = getMemberName(s.to);
+              const fromColor = getMemberColor(s.from);
+              const toColor = getMemberColor(s.to);
               const payment = getPaymentForSettlement(s.from, s.to);
               const completed = getCompletedPayment(s.from, s.to);
               const isFullyPaid = !!completed;
               const isPaying = payingSettlement === i;
 
               return (
-                <div
-                  key={i}
-                  className={`rounded-2xl bg-card shadow-card animate-fade-in stagger-${Math.min(i + 1, 5)} ${isFullyPaid ? 'opacity-60' : ''}`}
-                >
+                <div key={i} className={`rounded-2xl bg-card shadow-card animate-fade-in stagger-${Math.min(i + 1, 5)} ${isFullyPaid ? 'opacity-60' : ''}`}>
                   <div className="flex items-center gap-3 p-4">
-                    {/* From */}
                     <div className="flex flex-col items-center gap-1">
-                      <div
-                        className="flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold text-primary-foreground"
-                        style={{ backgroundColor: fromColor }}
-                      >
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold text-primary-foreground" style={{ backgroundColor: fromColor }}>
                         {fromName.charAt(0)}
                       </div>
                       <p className="text-[11px] font-medium text-foreground max-w-[60px] truncate">{fromName}</p>
                     </div>
-
-                    {/* Arrow + Amount */}
                     <div className="flex flex-1 flex-col items-center gap-0.5">
                       <div className="flex items-center gap-1 text-accent">
                         <div className="h-[1px] flex-1 bg-border" />
                         <ArrowRight size={16} />
                       </div>
-                      <p className={`text-sm font-bold ${isFullyPaid ? 'text-emerald-600 line-through' : 'text-primary'}`}>
-                        {formatCurrency(s.amount, currentTrip.currency)}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">
-                        {isFullyPaid ? 'settled ✓' : 'owes'}
-                      </p>
+                      <p className={`text-sm font-bold ${isFullyPaid ? 'text-emerald-600 line-through' : 'text-primary'}`}>{formatCurrency(s.amount)}</p>
+                      <p className="text-[10px] text-muted-foreground">{isFullyPaid ? 'settled ✓' : 'owes'}</p>
                     </div>
-
-                    {/* To */}
                     <div className="flex flex-col items-center gap-1">
-                      <div
-                        className="flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold text-primary-foreground"
-                        style={{ backgroundColor: toColor }}
-                      >
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold text-primary-foreground" style={{ backgroundColor: toColor }}>
                         {toName.charAt(0)}
                       </div>
                       <p className="text-[11px] font-medium text-foreground max-w-[60px] truncate">{toName}</p>
                     </div>
                   </div>
 
-                  {/* Payment status & actions */}
                   {!isFullyPaid && (
                     <div className="border-t border-border px-4 py-3">
                       {payment ? (
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
-                            {payment.confirmedByPayer && (
+                            {payment.confirmed_by_payer && (
                               <span className="flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-semibold text-amber-700">
                                 <Clock size={10} /> Payer confirmed
                               </span>
                             )}
-                            {payment.confirmedByReceiver && (
+                            {payment.confirmed_by_receiver && (
                               <span className="flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-[10px] font-semibold text-emerald-700">
                                 <Check size={10} /> Receiver confirmed
                               </span>
                             )}
                           </div>
-                          {payment.confirmedByPayer && !payment.confirmedByReceiver && (
-                            <button
-                              onClick={() => handleConfirmReceived(s)}
-                              className="press-effect flex items-center gap-1 rounded-xl bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-primary-foreground"
-                            >
+                          {payment.confirmed_by_payer && !payment.confirmed_by_receiver && (
+                            <button onClick={() => handleConfirmReceived(s)} className="press-effect flex items-center gap-1 rounded-xl bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-primary-foreground">
                               <Check size={12} /> Confirm Received
                             </button>
                           )}
-                          {!payment.confirmedByPayer && payment.confirmedByReceiver && (
-                            <button
-                              onClick={() => handleMarkPaid(s)}
-                              className="press-effect flex items-center gap-1 rounded-xl bg-primary px-3 py-1.5 text-[11px] font-semibold text-primary-foreground"
-                            >
+                          {!payment.confirmed_by_payer && payment.confirmed_by_receiver && (
+                            <button onClick={() => handleMarkPaid(s)} className="press-effect flex items-center gap-1 rounded-xl bg-primary px-3 py-1.5 text-[11px] font-semibold text-primary-foreground">
                               <Check size={12} /> Confirm Paid
                             </button>
                           )}
                         </div>
                       ) : isPaying ? (
                         <div className="flex items-center gap-2 animate-fade-in">
-                          <button
-                            onClick={() => handleMarkPaid(s)}
-                            className="press-effect flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-primary py-2 text-xs font-semibold text-primary-foreground"
-                          >
+                          <button onClick={() => handleMarkPaid(s)} className="press-effect flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-primary py-2 text-xs font-semibold text-primary-foreground">
                             <Send size={12} /> I've Paid This
                           </button>
-                          <button
-                            onClick={() => handleConfirmReceived(s)}
-                            className="press-effect flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 py-2 text-xs font-semibold text-primary-foreground"
-                          >
+                          <button onClick={() => handleConfirmReceived(s)} className="press-effect flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 py-2 text-xs font-semibold text-primary-foreground">
                             <Check size={12} /> I've Received This
                           </button>
                         </div>
                       ) : (
-                        <button
-                          onClick={() => { sounds.tap(); setPayingSettlement(i); }}
-                          className="press-effect w-full flex items-center justify-center gap-1.5 rounded-xl bg-secondary py-2 text-xs font-semibold text-secondary-foreground"
-                        >
+                        <button onClick={() => { sounds.tap(); setPayingSettlement(i); }} className="press-effect w-full flex items-center justify-center gap-1.5 rounded-xl bg-secondary py-2 text-xs font-semibold text-secondary-foreground">
                           <Check size={14} /> Mark as Paid
                         </button>
                       )}
