@@ -69,30 +69,8 @@ export default function TripDetailPage({ trip, onBack, onAddExpense, onSettle, o
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const selectedMemberData = selectedMember ? trip.members.find(m => m.id === selectedMember) : null;
-
-  // Build pendings for selected member: what they owe and what others owe them
-  const oweItems: Array<any> = [];
-  const receiveItems: Array<any> = [];
-  if (selectedMember) {
-    trip.expenses.forEach(exp => {
-      const splitCount = exp.splits?.length || 0;
-      if (splitCount === 0) return;
-      const perShare = Number(exp.amount) / splitCount;
-      exp.splits.forEach((s: any) => {
-        // selected member owes someone
-        if (s.member_id === selectedMember && exp.paid_by_member_id !== selectedMember) {
-          const payment = trip.payments.find((p: any) => p.from_member_id === s.member_id && p.to_member_id === exp.paid_by_member_id && Number(p.amount) === Number(perShare));
-          oweItems.push({ expenseId: exp.id, to: exp.paid_by_member_id, amount: perShare, payment, description: exp.description });
-        }
-        // others owe selected member
-        if (exp.paid_by_member_id === selectedMember && s.member_id !== selectedMember) {
-          const payment = trip.payments.find((p: any) => p.from_member_id === s.member_id && p.to_member_id === exp.paid_by_member_id && Number(p.amount) === Number(perShare));
-          receiveItems.push({ expenseId: exp.id, from: s.member_id, amount: perShare, payment, description: exp.description });
-        }
-      });
-    });
-  }
+  // expanded expense for showing split contributions inline
+  const [expandedExpenseId, setExpandedExpenseId] = useState<string | null>(null);
 
   const CATEGORIES: Record<string, { emoji: string; label: string }> = {
     food: { emoji: '🍽️', label: 'Food' },
@@ -131,6 +109,7 @@ export default function TripDetailPage({ trip, onBack, onAddExpense, onSettle, o
         <div className="mb-5 animate-fade-in stagger-2">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="font-display text-sm font-semibold text-foreground">Members</h2>
+            <button onClick={() => { sounds.tap(); onAddExpense(); }} className="press-effect rounded-xl bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground">Add Expense</button>
           </div>
           <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
             {trip.members.map(member => {
@@ -141,7 +120,7 @@ export default function TripDetailPage({ trip, onBack, onAddExpense, onSettle, o
               return (
                 <button
                   key={member.id}
-                  onClick={() => { sounds.tap(); setSelectedMember(isSelected ? null : member.id); }}
+                  onClick={() => { sounds.tap(); /* plain selection disabled for simplicity */ }}
                   className={`press-effect flex min-w-[120px] flex-col items-center gap-2 rounded-2xl bg-card p-3 shadow-card transition-all text-left
                     ${isSelected ? 'ring-2 ring-primary scale-105' : ''}`}
                 >
@@ -164,130 +143,7 @@ export default function TripDetailPage({ trip, onBack, onAddExpense, onSettle, o
           </div>
         </div>
 
-        {/* Member Detail Panel (simplified pendings view) */}
-        {selectedMemberData && (
-          <div className="mb-5 rounded-2xl bg-card shadow-card overflow-hidden animate-fade-in">
-            <div className="p-4 border-b border-border">
-              <div className="flex items-center gap-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-full text-base font-bold text-primary-foreground" style={{ backgroundColor: selectedMemberData.color }}>
-                  {selectedMemberData.name.charAt(0).toUpperCase()}
-                </div>
-                <div className="flex-1">
-                  <p className="font-display text-base font-bold text-foreground">{(selectedMemberData.name || '').split(' ')[0]}</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="p-4">
-              <div className="mb-3">
-                <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2 font-semibold">To Pay</p>
-                {oweItems.length === 0 ? (
-                  <div className="text-xs text-muted-foreground">Nothing to pay</div>
-                ) : (
-                  <div className="flex flex-col gap-2">
-                    {oweItems.map((it, idx) => {
-                      const other = trip.members.find(m => m.id === it.to);
-                      const short = other ? (other.name || '').split(' ')[0] : 'Unknown';
-                      const isSelf = user && selectedMemberData.user_id === user.id; // selected user is me
-                      const paid = it.payment && it.payment.confirmed_by_payer && it.payment.confirmed_by_receiver;
-                      const waiting = it.payment && it.payment.confirmed_by_payer && !it.payment.confirmed_by_receiver;
-                      return (
-                        <div key={idx} className="flex items-center justify-between rounded-lg bg-secondary/40 p-3">
-                          <div>
-                            <div className="text-sm font-medium text-foreground">Pay {short}</div>
-                            <div className="text-[11px] text-muted-foreground">{it.description}</div>
-                          </div>
-                          <div className="text-right">
-                            <div className="text-sm font-semibold text-red-500">{formatCurrency(it.amount)}</div>
-                            <div className="mt-2">
-                              {paid ? (
-                                <span className="text-[12px] text-emerald-600 font-semibold">Paid ✓</span>
-                              ) : waiting ? (
-                                <span className="text-[12px] text-amber-600">Awaiting confirmation</span>
-                              ) : isSelf ? (
-                                <button className="press-effect rounded-xl bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground" onClick={async () => {
-                                  try {
-                                    await supabase.from('payments').insert({
-                                      trip_id: trip.id,
-                                      from_member_id: selectedMember,
-                                      to_member_id: it.to,
-                                      amount: it.amount,
-                                      confirmed_by_payer: true,
-                                      confirmed_by_receiver: false,
-                                    });
-                                    sounds.success();
-                                    toast.success('Marked as paid');
-                                    await onRefetch();
-                                  } catch {
-                                    toast.error('Failed to mark paid');
-                                  }
-                                }}>Mark Paid</button>
-                              ) : (
-                                <span className="text-[12px] text-muted-foreground">—</span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2 font-semibold">To Receive</p>
-                {receiveItems.length === 0 ? (
-                  <div className="text-xs text-muted-foreground">Nothing to receive</div>
-                ) : (
-                  <div className="flex flex-col gap-2">
-                    {receiveItems.map((it, idx) => {
-                      const other = trip.members.find(m => m.id === it.from);
-                      const short = other ? (other.name || '').split(' ')[0] : 'Unknown';
-                      const isPayerUser = user && selectedMemberData.user_id === user.id; // selected member is me (payer)
-                      const paid = it.payment && it.payment.confirmed_by_payer && it.payment.confirmed_by_receiver;
-                      const waiting = it.payment && it.payment.confirmed_by_payer && !it.payment.confirmed_by_receiver;
-                      return (
-                        <div key={idx} className="flex items-center justify-between rounded-lg bg-secondary/40 p-3">
-                          <div>
-                            <div className="text-sm font-medium text-foreground">From {short}</div>
-                            <div className="text-[11px] text-muted-foreground">{it.description}</div>
-                          </div>
-                          <div className="text-right">
-                            <div className="text-sm font-semibold text-emerald-600">{formatCurrency(it.amount)}</div>
-                            <div className="mt-2">
-                              {paid ? (
-                                <span className="text-[12px] text-emerald-600 font-semibold">Paid ✓</span>
-                              ) : waiting ? (
-                                isPayerUser ? (
-                                  <button className="press-effect rounded-xl bg-emerald-600 px-3 py-1 text-xs font-semibold text-primary-foreground" onClick={async () => {
-                                    try {
-                                      await supabase.from('payments').update({ confirmed_by_receiver: true }).eq('id', it.payment.id);
-                                      // clear split
-                                      await supabase.from('expense_splits').delete().eq('expense_id', it.expenseId).eq('member_id', it.from);
-                                      sounds.success();
-                                      toast.success('Payment confirmed and split cleared');
-                                      await onRefetch();
-                                    } catch {
-                                      toast.error('Failed to confirm');
-                                    }
-                                  }}>Confirm Received</button>
-                                ) : (
-                                  <span className="text-[12px] text-amber-600">Awaiting confirmation</span>
-                                )
-                              ) : (
-                                <span className="text-[12px] text-muted-foreground">—</span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
+        {/* Member detail removed per latest request; only members and expenses shown */}
         {/* Expenses — show all expenses in a clean card list */}
         <div className="mt-4">
           <h2 className="mb-3 font-display text-sm font-semibold text-foreground">Expenses</h2>
