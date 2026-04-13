@@ -135,7 +135,7 @@ export default function TripsPage({ trips, onSelectTrip, onRefetch }: TripsPageP
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="text-3xl">🌴</span>
-            <h1 className="font-display text-2xl font-bold text-foreground">Tripatti</h1>
+            <h1 className="font-display text-2xl font-bold text-foreground">Tripzee</h1>
           </div>
           <button
             onClick={() => { sounds.tap(); signOut(); }}

@@ -37,7 +37,7 @@ export default function AuthPage() {
           <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-3xl bg-primary text-4xl shadow-card">
             🌴
           </div>
-          <h1 className="font-display text-3xl font-bold text-foreground">Tripatti</h1>
+          <h1 className="font-display text-3xl font-bold text-foreground">Tripzee</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             Split expenses, not friendships
           </p>

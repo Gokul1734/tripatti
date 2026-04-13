@@ -1,7 +1,7 @@
-// Tripatti Service Worker for Push Notifications
+// Tripzee Service Worker for Push Notifications
 
 self.addEventListener('push', function(event) {
-  let data = { title: 'Tripatti', body: 'New update on your trip!' };
+  let data = { title: 'Tripzee', body: 'New update on your trip!' };
   
   try {
     if (event.data) {
