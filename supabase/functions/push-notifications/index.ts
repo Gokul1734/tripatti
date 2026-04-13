@@ -95,6 +95,37 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Send to a single user (by user id)
+    if (action === 'send-notification-to-user') {
+      const { toUserId, title, message } = body;
+      const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+      // Get push subscriptions for this user
+      const { data: subscriptions } = await supabaseAdmin
+        .from('push_subscriptions')
+        .select('subscription_json')
+        .eq('user_id', toUserId);
+
+      if (!subscriptions || subscriptions.length === 0) {
+        return new Response(
+          JSON.stringify({ sent: 0 }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const payload = JSON.stringify({ title, body: message });
+      let sent = 0;
+      for (const sub of subscriptions) {
+        const ok = await sendPushNotification(sub.subscription_json, payload);
+        if (ok) sent++;
+      }
+
+      return new Response(
+        JSON.stringify({ sent }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     return new Response(
       JSON.stringify({ error: 'Unknown action' }),
       { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

@@ -5,7 +5,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { MEMBER_COLORS } from '@/types/trip';
 import { sounds } from '@/lib/sounds';
 import { toast } from 'sonner';
-import { Users, Plus, ArrowLeft, Wallet, TrendingUp, TrendingDown, ArrowRight, Send, HandCoins, Copy, Check, Share2 } from 'lucide-react';
+import { Users, ArrowLeft, Wallet, TrendingUp, TrendingDown, ArrowRight, Send, HandCoins, Copy, Check, Share2 } from 'lucide-react';
 
 interface TripDetailPageProps {
   trip: FullTrip;
@@ -189,13 +189,46 @@ export default function TripDetailPage({ trip, onBack, onAddExpense, onSettle, o
                           <p className="text-xs font-medium text-foreground">{otherName}</p>
                           <p className="text-[10px] text-muted-foreground">{isOwing ? 'You need to pay' : 'Needs to pay you'}</p>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <p className={`text-sm font-bold ${isOwing ? 'text-red-500' : 'text-emerald-600'}`}>{formatCurrency(s.amount)}</p>
-                          <button onClick={() => { sounds.tap(); onSettle(); }} className="press-effect flex items-center gap-1 rounded-lg bg-primary px-2.5 py-1.5 text-[10px] font-semibold text-primary-foreground">
-                            {isOwing ? <Send size={10} /> : <HandCoins size={10} />}
-                            {isOwing ? 'Pay' : 'Request'}
-                          </button>
-                        </div>
+                            <div className="flex items-center gap-2">
+                              <p className={`text-sm font-bold ${isOwing ? 'text-red-500' : 'text-emerald-600'}`}>{formatCurrency(s.amount)}</p>
+                              {isOwing ? (
+                                <button onClick={() => { sounds.tap(); onSettle(); }} className="press-effect flex items-center gap-1 rounded-lg bg-primary px-2.5 py-1.5 text-[10px] font-semibold text-primary-foreground">
+                                  <Send size={10} />
+                                  Pay
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={async () => {
+                                    // Request payment: notify the debtor (s.from)
+                                    sounds.tap();
+                                    try {
+                                      const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
+                                      await fetch(`https://${projectId}.supabase.co/functions/v1/push-notifications`, {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({
+                                          action: 'send-notification-to-user',
+                                          tripId: trip.id,
+                                          toUserId: s.from,
+                                          title: `🔔 Payment request in ${trip.name}`,
+                                          message: `${getMemberName(selectedMember || '')} requested ${formatCurrency(s.amount)} from ${getMemberName(s.from)}`,
+                                          excludeUserId: user?.id,
+                                        }),
+                                      });
+                                    } catch (err) {
+                                      // ignore failures for now
+                                    }
+
+                                    // keep existing behavior (open settle flow)
+                                    onSettle();
+                                  }}
+                                  className="press-effect flex items-center gap-1 rounded-lg bg-primary px-2.5 py-1.5 text-[10px] font-semibold text-primary-foreground"
+                                >
+                                  <HandCoins size={10} />
+                                  Request
+                                </button>
+                              )}
+                            </div>
                       </div>
                     );
                   })}
